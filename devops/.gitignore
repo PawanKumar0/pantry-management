@@ -1,0 +1,28 @@
+# Kubernetes
+*.kubeconfig
+kubeconfig*
+
+# Helm
+charts/
+tmp/
+*.tgz
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.backup
+*.tfvars
+*.tfvars.json
+override.tf
+override.tf.json
+_override.tf
+_override.tf.json
+.terraformrc
+terraform.rc
+
+# Environment
+.env
+*.env
+
+# OS
+.DS_Store

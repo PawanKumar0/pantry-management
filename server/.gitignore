@@ -2,9 +2,14 @@
 node_modules/
 
 # Build output
+lib/
 dist/
 build/
-out/
+
+# Logs
+logs/
+*.log
+npm-debug.log*
 
 # Environment
 .env
@@ -21,9 +26,9 @@ out/
 .DS_Store
 Thumbs.db
 
-# Logs
-logs/
-*.log
+# Prisma
+prisma/*.db
+prisma/*.db-journal
 
 # Coverage
 coverage/
@@ -31,6 +36,3 @@ coverage/
 # Temporary
 tmp/
 temp/
-
-# Gemini artifacts
-.gemini/
