@@ -1,0 +1,373 @@
+// Prisma Schema for Pantry Management System
+// Multi-tenant architecture with organizations
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================
+// ORGANIZATION & AUTH
+// ============================================
+
+model Organization {
+  id        String   @id @default(uuid())
+  name      String
+  slug      String   @unique
+  logo      String?
+  
+  // Settings
+  settings  Json     @default("{}")
+  
+  // Payment configuration
+  requirePayment  Boolean @default(false)
+  paymentProvider String? // 'razorpay', 'stripe', 'custom'
+  paymentConfig   Json?   // Provider-specific config (encrypted)
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  spaces     Space[]
+  categories Category[]
+  users      User[]
+  coupons    Coupon[]
+  orders     Order[]
+  
+  @@index([slug])
+}
+
+model User {
+  id           String   @id @default(uuid())
+  email        String
+  name         String?
+  avatar       String?
+  role         UserRole @default(GUEST)
+  
+  // SSO/OAuth
+  provider     String?  // 'google', 'azure', 'okta', etc.
+  providerId   String?  // External provider user ID
+  
+  // Organization membership
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  sessions Session[]
+  orders   Order[]
+  
+  @@unique([email, organizationId])
+  @@unique([provider, providerId])
+  @@index([organizationId])
+}
+
+enum UserRole {
+  GUEST       // Can order only
+  EMPLOYEE    // Can order + view history
+  PANTRY      // Pantry staff - manage orders
+  ADMIN       // Full org management
+  SUPER_ADMIN // Platform admin
+}
+
+// ============================================
+// SPACES & SESSIONS
+// ============================================
+
+model Space {
+  id          String   @id @default(uuid())
+  name        String   // "Board Room A", "Floor 3 Pantry"
+  description String?
+  location    String?  // Floor, building info
+  
+  // QR Code
+  qrCode      String   @unique @default(uuid())
+  qrImage     String?  // Generated QR image URL
+  
+  // Capacity & availability
+  capacity    Int?
+  isActive    Boolean  @default(true)
+  
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  sessions Session[]
+  orders   Order[]
+  
+  @@index([organizationId])
+  @@index([qrCode])
+}
+
+model Session {
+  id        String        @id @default(uuid())
+  status    SessionStatus @default(ACTIVE)
+  
+  // Session metadata
+  chairNumber Int?        // Optional seat/chair identifier
+  guestName   String?     // For guest users
+  
+  // Duration
+  expiresAt DateTime
+  
+  spaceId String
+  space   Space  @relation(fields: [spaceId], references: [id], onDelete: Cascade)
+  
+  userId  String?
+  user    User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  orders Order[]
+  
+  @@index([spaceId])
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+enum SessionStatus {
+  ACTIVE
+  EXPIRED
+  CLOSED
+}
+
+// ============================================
+// INVENTORY
+// ============================================
+
+model Category {
+  id          String  @id @default(uuid())
+  name        String  // "Hot Beverages", "Snacks"
+  description String?
+  icon        String? // Category icon
+  sortOrder   Int     @default(0)
+  isActive    Boolean @default(true)
+  
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  items Item[]
+  
+  @@index([organizationId])
+}
+
+model Item {
+  id          String  @id @default(uuid())
+  name        String  // "Cappuccino", "Cookies"
+  description String?
+  
+  // Pricing
+  price       Decimal @default(0) @db.Decimal(10, 2)
+  isFree      Boolean @default(false) // Override price
+  
+  // Image/Icon
+  image       String? // Custom uploaded image
+  icon        String? // Auto-fetched icon
+  autoIcon    Boolean @default(true) // Auto-fetch icon if no image
+  
+  // Stock management
+  stock       Int?    // null = unlimited
+  lowStockThreshold Int @default(5)
+  
+  // Availability
+  isAvailable Boolean @default(true)
+  isActive    Boolean @default(true)
+  
+  // Options/variants
+  options     Json?   // { "size": ["S", "M", "L"], "sugar": ["None", "Low", "Regular"] }
+  
+  categoryId String
+  category   Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  orderItems OrderItem[]
+  
+  @@index([categoryId])
+}
+
+// ============================================
+// ORDERS & PAYMENTS
+// ============================================
+
+model Order {
+  id          String      @id @default(uuid())
+  orderNumber String      @unique // Human-readable: ORD-001
+  status      OrderStatus @default(PENDING)
+  
+  // Pricing
+  subtotal    Decimal     @db.Decimal(10, 2)
+  discount    Decimal     @default(0) @db.Decimal(10, 2)
+  total       Decimal     @db.Decimal(10, 2)
+  
+  // Delivery info
+  chairNumber Int?
+  notes       String?
+  
+  // Timestamps
+  placedAt    DateTime    @default(now())
+  acceptedAt  DateTime?
+  preparingAt DateTime?
+  readyAt     DateTime?
+  deliveredAt DateTime?
+  cancelledAt DateTime?
+  
+  // Relations
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  
+  sessionId String
+  session   Session @relation(fields: [sessionId], references: [id])
+  
+  spaceId String
+  space   Space  @relation(fields: [spaceId], references: [id])
+  
+  userId  String?
+  user    User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+  
+  couponId String?
+  coupon   Coupon? @relation(fields: [couponId], references: [id], onDelete: SetNull)
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  items    OrderItem[]
+  payment  Payment?
+  
+  @@index([organizationId])
+  @@index([sessionId])
+  @@index([spaceId])
+  @@index([status])
+  @@index([placedAt])
+}
+
+enum OrderStatus {
+  PENDING     // Just placed
+  ACCEPTED    // Accepted by pantry
+  PREPARING   // Being prepared
+  READY       // Ready for pickup/delivery
+  DELIVERED   // Completed
+  CANCELLED   // Cancelled
+}
+
+model OrderItem {
+  id        String  @id @default(uuid())
+  quantity  Int     @default(1)
+  unitPrice Decimal @db.Decimal(10, 2)
+  total     Decimal @db.Decimal(10, 2)
+  
+  // Selected options
+  options   Json?   // { "size": "M", "sugar": "Low" }
+  notes     String?
+  
+  orderId String
+  order   Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  
+  itemId String
+  item   Item   @relation(fields: [itemId], references: [id])
+  
+  createdAt DateTime @default(now())
+  
+  @@index([orderId])
+}
+
+model Payment {
+  id       String        @id @default(uuid())
+  provider String        // 'razorpay', 'stripe', 'free'
+  status   PaymentStatus @default(PENDING)
+  
+  // Amount
+  amount   Decimal       @db.Decimal(10, 2)
+  currency String        @default("INR")
+  
+  // Provider-specific
+  externalId     String?  // Provider's payment ID
+  externalOrderId String? // Provider's order ID
+  metadata       Json?    // Full response from provider
+  
+  // Refund
+  refundedAmount Decimal? @db.Decimal(10, 2)
+  refundedAt     DateTime?
+  
+  orderId String @unique
+  order   Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  @@index([externalId])
+  @@index([status])
+}
+
+enum PaymentStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+  REFUNDED
+  PARTIALLY_REFUNDED
+}
+
+// ============================================
+// COUPONS
+// ============================================
+
+model Coupon {
+  id          String     @id @default(uuid())
+  code        String
+  description String?
+  
+  // Discount type
+  type        CouponType
+  value       Decimal    @db.Decimal(10, 2) // Amount or percentage
+  
+  // Constraints
+  minOrderAmount Decimal? @db.Decimal(10, 2)
+  maxDiscount    Decimal? @db.Decimal(10, 2) // For percentage coupons
+  
+  // Usage limits
+  usageLimit     Int?     // null = unlimited
+  usageCount     Int      @default(0)
+  perUserLimit   Int      @default(1)
+  
+  // Validity
+  validFrom   DateTime   @default(now())
+  validUntil  DateTime?
+  isActive    Boolean    @default(true)
+  
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  orders Order[]
+  
+  @@unique([code, organizationId])
+  @@index([organizationId])
+  @@index([code])
+}
+
+enum CouponType {
+  PERCENTAGE  // e.g., 10% off
+  FIXED       // e.g., ₹50 off
+}
